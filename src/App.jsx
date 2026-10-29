@@ -34,6 +34,15 @@ function Gate() {
   return session ? <Checklist user={session.user} /> : <Auth />
 }
 
+function PencilIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  )
+}
+
 function formatDay(date) {
   const today = toDateKey(new Date())
   const key = toDateKey(date)
@@ -185,12 +194,15 @@ function Checklist({ user }) {
           ) : (
             <ul className="list">
               {due.map((t) => (
-                <li key={t.id}>
+                <li key={t.id} className="check-row">
                   <label className={done.has(t.id) ? 'check done' : 'check'}>
                     <input type="checkbox" checked={done.has(t.id)} onChange={() => toggle(t)} />
                     <span className="box" aria-hidden />
                     <span className="label">{t.title}</span>
                   </label>
+                  <button className="edit" aria-label={`Edit ${t.title}`} onClick={() => setEditing(t)}>
+                    <PencilIcon />
+                  </button>
                 </li>
               ))}
             </ul>
@@ -207,6 +219,9 @@ function Checklist({ user }) {
                 <button className="row" onClick={() => setEditing(t)}>
                   <span className="label">{t.title}</span>
                   <span className="muted">{describeSchedule(t)}</span>
+                  <span className="chevron" aria-hidden>
+                    ›
+                  </span>
                 </button>
               </li>
             ))}

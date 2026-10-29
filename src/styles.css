@@ -208,6 +208,24 @@ header {
   gap: 8px;
 }
 
+.check-row {
+  display: flex;
+  gap: 8px;
+}
+.check-row .check {
+  flex: 1;
+  min-width: 0;
+}
+.check-row .edit {
+  flex: none;
+  width: 52px;
+  padding: 0;
+  border-radius: 14px;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+}
+
 .check {
   display: flex;
   align-items: center;
@@ -264,9 +282,17 @@ header {
   padding: 16px;
   border-radius: 14px;
 }
+.row .label {
+  flex: 1;
+}
 .row .muted {
   font-size: 0.9rem;
   text-align: right;
+}
+.row .chevron {
+  color: var(--muted);
+  font-size: 1.4rem;
+  line-height: 1;
 }
 
 .empty {
