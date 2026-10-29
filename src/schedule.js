@@ -38,6 +38,19 @@ export function isDueOn(task, date) {
   }
 }
 
+// Every due-but-unchecked occurrence from `fromKey` up to (not including) `toKey`.
+// `doneKeys` holds "taskId|YYYY-MM-DD" strings for completed occurrences.
+export function findMisses(tasks, doneKeys, fromKey, toKey) {
+  const misses = []
+  for (let d = fromDateKey(fromKey); toDateKey(d) < toKey; d = addDays(d, 1)) {
+    const key = toDateKey(d)
+    for (const t of tasks) {
+      if (isDueOn(t, d) && !doneKeys.has(`${t.id}|${key}`)) misses.push({ task: t, date: key })
+    }
+  }
+  return misses
+}
+
 function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd']
   const v = n % 100

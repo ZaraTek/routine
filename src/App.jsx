@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isConfigured, supabase } from './supabase'
-import { addDays, describeSchedule, isDueOn, toDateKey } from './schedule'
+import { addDays, describeSchedule, findMisses, fromDateKey, isDueOn, toDateKey } from './schedule'
 import Auth from './Auth'
 import TaskForm from './TaskForm'
 
@@ -43,6 +43,53 @@ function PencilIcon() {
   )
 }
 
+export function StrikeCard({ strikes, month, onJump }) {
+  const [open, setOpen] = useState(false)
+  const n = strikes.length
+
+  // group missed days by task, worst first
+  const byTask = new Map()
+  for (const s of strikes) {
+    if (!byTask.has(s.task.id)) byTask.set(s.task.id, { task: s.task, dates: [] })
+    byTask.get(s.task.id).dates.push(s.date)
+  }
+  const groups = [...byTask.values()].sort((a, b) => b.dates.length - a.dates.length)
+  const short = (key) => fromDateKey(key).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+
+  return (
+    <section className={n ? 'strikes has-strikes' : 'strikes'}>
+      <button className="strikes-head" onClick={() => n && setOpen(!open)} aria-expanded={n ? open : undefined}>
+        <span className="strikes-count">{n}</span>
+        <span className="strikes-text">
+          <strong>{n === 1 ? 'strike' : 'strikes'} in {month}</strong>
+          <span className="muted">{n ? 'Missed tasks this month' : 'Nothing missed so far. Keep it up'}</span>
+        </span>
+        {n > 0 && <span className="chevron">{open ? '⌃' : '⌄'}</span>}
+      </button>
+      {open && (
+        <ul className="strikes-list">
+          {groups.map(({ task, dates }) => (
+            <li key={task.id}>
+              <div className="strikes-task">
+                <span>{task.title}</span>
+                <span className="strikes-badge">{dates.length}</span>
+              </div>
+              <div className="strikes-dates">
+                {dates.map((d) => (
+                  <button key={d} onClick={() => onJump(d)}>
+                    {short(d)}
+                  </button>
+                ))}
+              </div>
+            </li>
+          ))}
+          <li className="muted strikes-hint">Tap a date to open that day. Checking a task off there removes the strike.</li>
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function formatDay(date) {
   const today = toDateKey(new Date())
   const key = toDateKey(date)
@@ -55,6 +102,7 @@ function formatDay(date) {
 function Checklist({ user }) {
   const [tasks, setTasks] = useState([])
   const [done, setDone] = useState(new Set()) // task ids completed on `date`
+  const [monthDone, setMonthDone] = useState(new Set()) // "taskId|date" completed this month before today
   const [date, setDate] = useState(() => new Date())
   const [tab, setTab] = useState('today')
   const [editing, setEditing] = useState(null) // null | 'new' | task
@@ -62,6 +110,8 @@ function Checklist({ user }) {
   const [loaded, setLoaded] = useState(false)
 
   const dateKey = toDateKey(date)
+  const todayKey = toDateKey(new Date())
+  const monthStartKey = todayKey.slice(0, 8) + '01' // strikes reset on the 1st
 
   useEffect(() => {
     supabase
@@ -91,30 +141,49 @@ function Checklist({ user }) {
     }
   }, [dateKey])
 
+  useEffect(() => {
+    supabase
+      .from('completions')
+      .select('task_id, date')
+      .gte('date', monthStartKey)
+      .lt('date', todayKey)
+      .then(({ data, error }) => {
+        if (error) setError(error.message)
+        else setMonthDone(new Set(data.map((r) => `${r.task_id}|${r.date}`)))
+      })
+  }, [monthStartKey, todayKey])
+
   const due = useMemo(() => tasks.filter((t) => isDueOn(t, date)), [tasks, date])
   const completed = due.filter((t) => done.has(t.id)).length
+  const strikes = useMemo(
+    () => findMisses(tasks, monthDone, monthStartKey, todayKey),
+    [tasks, monthDone, monthStartKey, todayKey],
+  )
 
   const toggle = useCallback(
     async (task) => {
       const wasDone = done.has(task.id)
-      setDone((cur) => {
-        const next = new Set(cur)
-        wasDone ? next.delete(task.id) : next.add(task.id)
-        return next
-      })
+      const monthKey = `${task.id}|${dateKey}`
+      const inMonth = dateKey >= monthStartKey && dateKey < todayKey
+      const apply = (checked) => {
+        const update = (key) => (cur) => {
+          const next = new Set(cur)
+          checked ? next.add(key) : next.delete(key)
+          return next
+        }
+        setDone(update(task.id))
+        if (inMonth) setMonthDone(update(monthKey))
+      }
+      apply(!wasDone)
       const { error } = wasDone
         ? await supabase.from('completions').delete().eq('task_id', task.id).eq('date', dateKey)
         : await supabase.from('completions').upsert({ task_id: task.id, date: dateKey }, { onConflict: 'task_id,date' })
       if (error) {
         setError(error.message)
-        setDone((cur) => {
-          const next = new Set(cur)
-          wasDone ? next.add(task.id) : next.delete(task.id)
-          return next
-        })
+        apply(wasDone)
       }
     },
-    [done, dateKey],
+    [done, dateKey, monthStartKey, todayKey],
   )
 
   async function save(fields) {
@@ -136,6 +205,7 @@ function Checklist({ user }) {
 
   const isToday = dateKey === toDateKey(new Date())
   const pct = due.length ? Math.round((completed / due.length) * 100) : 0
+  const isStrikeDay = dateKey >= monthStartKey && dateKey < todayKey
 
   return (
     <div className="app">
@@ -161,6 +231,13 @@ function Checklist({ user }) {
 
       {tab === 'today' ? (
         <main>
+          {loaded && (
+            <StrikeCard
+              strikes={strikes}
+              month={new Date().toLocaleDateString(undefined, { month: 'long' })}
+              onJump={(key) => setDate(fromDateKey(key))}
+            />
+          )}
           <div className="daynav">
             <button aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}>
               ‹
@@ -199,6 +276,7 @@ function Checklist({ user }) {
                     <input type="checkbox" checked={done.has(t.id)} onChange={() => toggle(t)} />
                     <span className="box" aria-hidden />
                     <span className="label">{t.title}</span>
+                    {isStrikeDay && !done.has(t.id) && <span className="strike-tag">Strike</span>}
                   </label>
                   <button className="edit" aria-label={`Edit ${t.title}`} onClick={() => setEditing(t)}>
                     <PencilIcon />
