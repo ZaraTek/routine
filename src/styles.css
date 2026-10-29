@@ -301,6 +301,25 @@ header {
 .punch-btn.punched {
   color: var(--ok);
 }
+.punch-days {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.8rem;
+}
+.punch-days .days button {
+  min-height: 36px;
+  font-size: 0.8rem;
+}
+.punch-days .days button.active {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+.punch-days .days button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 
 /* ---------- strikes ---------- */
 .strikes {

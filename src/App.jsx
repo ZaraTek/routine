@@ -123,11 +123,13 @@ export function StrikeCard({ strikes, month, onJump }) {
   )
 }
 
-export function PunchCard({ task, punches, dateKey, onPunch, onEdit }) {
+export function PunchCard({ task, punches, dateKey, todayKey, onPunch, onPunchDay, onEdit }) {
   const target = task.punch_target
   const punchedToday = punches.includes(dateKey)
   const holes = Math.max(target, punches.length)
   const complete = punches.length >= target
+  const ws = weekStart(fromDateKey(dateKey))
+  const weekDays = Array.from({ length: 7 }, (_, i) => toDateKey(addDays(ws, i)))
   return (
     <li className={complete ? 'punch complete' : 'punch'}>
       <div className="punch-head">
@@ -149,6 +151,27 @@ export function PunchCard({ task, punches, dateKey, onPunch, onEdit }) {
       <button className={punchedToday ? 'punch-btn punched' : 'punch-btn primary'} onClick={onPunch}>
         {punchedToday ? 'Punched ✓ (tap to undo)' : 'Punch'}
       </button>
+      <div className="punch-days">
+        <span className="muted">Forgot one? Tap a day this week:</span>
+        <div className="days">
+          {weekDays.map((key) => {
+            const punched = punches.includes(key)
+            const name = fromDateKey(key).toLocaleDateString(undefined, { weekday: 'long' })
+            return (
+              <button
+                key={key}
+                className={punched ? 'active' : ''}
+                disabled={key > todayKey}
+                aria-pressed={punched}
+                aria-label={`${punched ? 'Remove punch for' : 'Punch'} ${name}`}
+                onClick={() => onPunchDay(key)}
+              >
+                {WEEKDAY_NAMES[fromDateKey(key).getDay()].slice(0, 2)}
+              </button>
+            )
+          })}
+        </div>
+      </div>
     </li>
   )
 }
@@ -426,7 +449,9 @@ function Checklist({ user }) {
                     task={t}
                     punches={punchesInWeek(t, doneKeys, date)}
                     dateKey={dateKey}
+                    todayKey={todayKey}
                     onPunch={() => toggle(t, dateKey)}
+                    onPunchDay={(key) => toggle(t, key)}
                     onEdit={() => setEditing(t)}
                   />
                 ))}
