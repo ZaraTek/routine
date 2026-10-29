@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isConfigured, supabase } from './supabase'
 import {
   addDays,
@@ -275,6 +275,15 @@ function PunchRow({ task, punches, punched, onPunch }) {
   )
 }
 
+const TABS = [
+  ['home', 'Home'],
+  ['agenda', 'Agenda'],
+  ['punch', 'Punch'],
+  ['tasks', 'Tasks'],
+  ['calendar', 'Calendar'],
+]
+const tabIndex = (id) => TABS.findIndex(([t]) => t === id)
+
 function formatDay(date) {
   const today = toDateKey(new Date())
   const key = toDateKey(date)
@@ -291,6 +300,8 @@ function Checklist({ user }) {
   const [date, setDate] = useState(() => new Date())
   const [punchWeekKey, setPunchWeekKey] = useState(() => toDateKey(weekStart(new Date()))) // Monday of the week on the Punch tab
   const [tab, setTab] = useState('home')
+  const [slide, setSlide] = useState('') // direction of the last tab change, for the slide-in animation
+  const swipe = useRef(null)
   const [editing, setEditing] = useState(null) // null | 'new' | 'new-punch' | task
   const [agenda, setAgenda] = useState([])
   const [agendaSetupNeeded, setAgendaSetupNeeded] = useState(false)
@@ -439,6 +450,33 @@ function Checklist({ user }) {
   }
 
   const isToday = dateKey === toDateKey(new Date())
+
+  function goTo(id) {
+    if (id === tab) return
+    setSlide(tabIndex(id) > tabIndex(tab) ? 'left' : 'right')
+    setTab(id)
+  }
+
+  // swipe left/right anywhere on the page to change tabs (mobile)
+  function onTouchStart(e) {
+    const t = e.touches[0]
+    const fromEdge = t.clientX < 24 || t.clientX > window.innerWidth - 24 // leave the browser's edge-swipe back gesture alone
+    const inField = e.target.closest('input, textarea, select')
+    swipe.current = editing || editingAgenda || fromEdge || inField || e.touches.length > 1
+      ? null
+      : { x: t.clientX, y: t.clientY, time: Date.now() }
+  }
+  function onTouchEnd(e) {
+    const start = swipe.current
+    swipe.current = null
+    if (!start) return
+    const t = e.changedTouches[0]
+    const dx = t.clientX - start.x
+    const dy = t.clientY - start.y
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - start.time > 700) return
+    const next = TABS[tabIndex(tab) + (dx < 0 ? 1 : -1)]
+    if (next) goTo(next[0])
+  }
   const isStrike = (o) => o.dueKey >= monthStartKey && o.dueKey < todayKey && !isDone(o)
   const monthName = new Date().toLocaleDateString(undefined, { month: 'long' })
 
@@ -477,17 +515,11 @@ function Checklist({ user }) {
   )
 
   return (
-    <div className="app">
+    <div className="app" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <header>
         <nav className="tabs">
-          {[
-            ['home', 'Home'],
-            ['agenda', 'Agenda'],
-            ['punch', 'Punch'],
-            ['tasks', 'Tasks'],
-            ['calendar', 'Calendar'],
-          ].map(([id, label]) => (
-            <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>
+          {TABS.map(([id, label]) => (
+            <button key={id} className={tab === id ? 'active' : ''} onClick={() => goTo(id)}>
               {label}
               {id === 'agenda' && agendaDueCount > 0 && (
                 <span className="tab-badge" aria-label={`${agendaDueCount} due`}>
@@ -505,144 +537,146 @@ function Checklist({ user }) {
         </p>
       )}
 
-      {tab === 'home' ? (
-        <main>
-          {loaded && doneLoaded && (
-            <>
-              <RateCard due={stats.due} done={stats.done} month={monthName} />
-              <StrikeCard
-                strikes={stats.misses}
-                month={monthName}
-                onJump={(miss) => {
-                  // punch-card misses open that week on the Punch tab; others open the day here
-                  if (miss.week) {
-                    setPunchWeekKey(miss.date)
-                    setTab('punch')
-                  } else setDate(fromDateKey(miss.date))
-                }}
-              />
-            </>
-          )}
-          <div className="daynav">
-            <button aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}>
-              ‹
-            </button>
-            <div className="daytitle">
-              <h1>{formatDay(date)}</h1>
-              <span className="muted">
-                {date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-              </span>
+      <div key={tab} className={slide ? `tab-view slide-${slide}` : 'tab-view'}>
+        {tab === 'home' ? (
+          <main>
+            {loaded && doneLoaded && (
+              <>
+                <RateCard due={stats.due} done={stats.done} month={monthName} />
+                <StrikeCard
+                  strikes={stats.misses}
+                  month={monthName}
+                  onJump={(miss) => {
+                    // punch-card misses open that week on the Punch tab; others open the day here
+                    if (miss.week) {
+                      setPunchWeekKey(miss.date)
+                      goTo('punch')
+                    } else setDate(fromDateKey(miss.date))
+                  }}
+                />
+              </>
+            )}
+            <div className="daynav">
+              <button aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}>
+                ‹
+              </button>
+              <div className="daytitle">
+                <h1>{formatDay(date)}</h1>
+                <span className="muted">
+                  {date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                </span>
+              </div>
+              <button aria-label="Next day" onClick={() => setDate(addDays(date, 1))}>
+                ›
+              </button>
             </div>
-            <button aria-label="Next day" onClick={() => setDate(addDays(date, 1))}>
-              ›
-            </button>
-          </div>
-          {!isToday && (
-            <button className="link center" onClick={() => setDate(new Date())}>
-              Jump to today
-            </button>
-          )}
+            {!isToday && (
+              <button className="link center" onClick={() => setDate(new Date())}>
+                Jump to today
+              </button>
+            )}
 
-          {!loaded ? (
-            <p className="muted center">Loading…</p>
-          ) : !tasks.length && !agenda.length ? (
-            <p className="empty">Nothing here yet. Tap + to add your first task.</p>
-          ) : (
-            <>
-              <HomeSection
-                title="Today"
-                count={todayOpen.length ? `${todayDone} of ${todayTotal} done` : null}
-                empty={todayTotal ? 'Everything due today is done ✓' : 'Nothing due today 🎉'}
-              >
-                {todayOpen.map(renderTaskRow)}
-              </HomeSection>
-
-              {homePunch.length > 0 && (
-                <HomeSection title="Punch cards" link={['See all', () => setTab('punch')]}>
-                  {homePunch.map(({ task, punches }) => (
-                    <PunchRow
-                      key={task.id}
-                      task={task}
-                      punches={punches}
-                      punched={punches.includes(dateKey)}
-                      onPunch={() => toggle(task, dateKey)}
-                    />
-                  ))}
+            {!loaded ? (
+              <p className="muted center">Loading…</p>
+            ) : !tasks.length && !agenda.length ? (
+              <p className="empty">Nothing here yet. Tap + to add your first task.</p>
+            ) : (
+              <>
+                <HomeSection
+                  title="Today"
+                  count={todayOpen.length ? `${todayDone} of ${todayTotal} done` : null}
+                  empty={todayTotal ? 'Everything due today is done ✓' : 'Nothing due today 🎉'}
+                >
+                  {todayOpen.map(renderTaskRow)}
                 </HomeSection>
-              )}
 
-              {!agendaSetupNeeded && (
-                <HomeSection title="Assignments" link={['Agenda', () => setTab('agenda')]} empty="Nothing due in the next week">
-                  {homeAgenda.map((item) => (
-                    <AgendaRow key={item.id} item={item} todayKey={todayKey} onToggle={toggleAgenda} onEdit={setEditingAgenda} />
-                  ))}
-                </HomeSection>
-              )}
+                {homePunch.length > 0 && (
+                  <HomeSection title="Punch cards" link={['See all', () => goTo('punch')]}>
+                    {homePunch.map(({ task, punches }) => (
+                      <PunchRow
+                        key={task.id}
+                        task={task}
+                        punches={punches}
+                        punched={punches.includes(dateKey)}
+                        onPunch={() => toggle(task, dateKey)}
+                      />
+                    ))}
+                  </HomeSection>
+                )}
 
-              {weeklyOpen.length > 0 && <HomeSection title="Weekly">{weeklyOpen.map(renderTaskRow)}</HomeSection>}
-              {monthlyOpen.length > 0 && <HomeSection title="Monthly">{monthlyOpen.map(renderTaskRow)}</HomeSection>}
+                {!agendaSetupNeeded && (
+                  <HomeSection title="Assignments" link={['Agenda', () => goTo('agenda')]} empty="Nothing due in the next week">
+                    {homeAgenda.map((item) => (
+                      <AgendaRow key={item.id} item={item} todayKey={todayKey} onToggle={toggleAgenda} onEdit={setEditingAgenda} />
+                    ))}
+                  </HomeSection>
+                )}
 
-              {doneDue.length > 0 && (
-                <section className="home-section">
-                  <button className="link section-toggle" onClick={() => setShowDone(!showDone)} aria-expanded={showDone}>
-                    {showDone ? 'Hide' : 'Show'} done ({doneDue.length})
+                {weeklyOpen.length > 0 && <HomeSection title="Weekly">{weeklyOpen.map(renderTaskRow)}</HomeSection>}
+                {monthlyOpen.length > 0 && <HomeSection title="Monthly">{monthlyOpen.map(renderTaskRow)}</HomeSection>}
+
+                {doneDue.length > 0 && (
+                  <section className="home-section">
+                    <button className="link section-toggle" onClick={() => setShowDone(!showDone)} aria-expanded={showDone}>
+                      {showDone ? 'Hide' : 'Show'} done ({doneDue.length})
+                    </button>
+                    {showDone && <ul className="list">{doneDue.map(renderTaskRow)}</ul>}
+                  </section>
+                )}
+              </>
+            )}
+          </main>
+        ) : tab === 'punch' ? (
+          <PunchTab
+            tasks={tasks}
+            doneKeys={doneKeys}
+            weekKey={punchWeekKey}
+            todayKey={todayKey}
+            onWeek={setPunchWeekKey}
+            onPunch={toggle}
+            onEdit={setEditing}
+          />
+        ) : tab === 'calendar' ? (
+          <Calendar
+            tasks={tasks}
+            onError={setError}
+            onOpenDay={(key) => {
+              setDate(fromDateKey(key))
+              goTo('home')
+            }}
+          />
+        ) : tab === 'agenda' ? (
+          <Agenda
+            items={agenda}
+            todayKey={todayKey}
+            setupNeeded={agendaSetupNeeded}
+            onToggle={toggleAgenda}
+            onEdit={setEditingAgenda}
+          />
+        ) : (
+          <main>
+            <h1>All tasks</h1>
+            {tasks.length === 0 && <p className="empty">No tasks yet — add your first one.</p>}
+            <ul className="list">
+              {tasks.map((t) => (
+                <li key={t.id}>
+                  <button className="row" onClick={() => setEditing(t)}>
+                    <span className="label">{t.title}</span>
+                    <span className="muted">{describeSchedule(t)}</span>
+                    <span className="chevron" aria-hidden>
+                      ›
+                    </span>
                   </button>
-                  {showDone && <ul className="list">{doneDue.map(renderTaskRow)}</ul>}
-                </section>
-              )}
-            </>
-          )}
-        </main>
-      ) : tab === 'punch' ? (
-        <PunchTab
-          tasks={tasks}
-          doneKeys={doneKeys}
-          weekKey={punchWeekKey}
-          todayKey={todayKey}
-          onWeek={setPunchWeekKey}
-          onPunch={toggle}
-          onEdit={setEditing}
-        />
-      ) : tab === 'calendar' ? (
-        <Calendar
-          tasks={tasks}
-          onError={setError}
-          onOpenDay={(key) => {
-            setDate(fromDateKey(key))
-            setTab('home')
-          }}
-        />
-      ) : tab === 'agenda' ? (
-        <Agenda
-          items={agenda}
-          todayKey={todayKey}
-          setupNeeded={agendaSetupNeeded}
-          onToggle={toggleAgenda}
-          onEdit={setEditingAgenda}
-        />
-      ) : (
-        <main>
-          <h1>All tasks</h1>
-          {tasks.length === 0 && <p className="empty">No tasks yet — add your first one.</p>}
-          <ul className="list">
-            {tasks.map((t) => (
-              <li key={t.id}>
-                <button className="row" onClick={() => setEditing(t)}>
-                  <span className="label">{t.title}</span>
-                  <span className="muted">{describeSchedule(t)}</span>
-                  <span className="chevron" aria-hidden>
-                    ›
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          <div className="account">
-            <span className="muted">Signed in as {user.email}</span>
-            <button onClick={() => supabase.auth.signOut()}>Sign out</button>
-          </div>
-        </main>
-      )}
+                </li>
+              ))}
+            </ul>
+            <div className="account">
+              <span className="muted">Signed in as {user.email}</span>
+              <button onClick={() => supabase.auth.signOut()}>Sign out</button>
+            </div>
+          </main>
+        )}
+      </div>
 
       {!(tab === 'agenda' && agendaSetupNeeded) && (
         <button

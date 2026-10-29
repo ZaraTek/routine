@@ -887,3 +887,28 @@ textarea {
   color: var(--ok);
   font-weight: 700;
 }
+
+/* ---------- tab change animation ---------- */
+.tab-view.slide-left {
+  animation: slide-from-right 0.18s ease-out;
+}
+.tab-view.slide-right {
+  animation: slide-from-left 0.18s ease-out;
+}
+@keyframes slide-from-right {
+  from {
+    transform: translateX(28px);
+    opacity: 0;
+  }
+}
+@keyframes slide-from-left {
+  from {
+    transform: translateX(-28px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-view {
+    animation: none !important;
+  }
+}
