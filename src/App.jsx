@@ -332,9 +332,9 @@ function Checklist({ user }) {
         <nav className="tabs">
           {[
             ['today', 'Today'],
-            ['calendar', 'Calendar'],
             ['agenda', 'Agenda'],
             ['tasks', 'Tasks'],
+            ['calendar', 'Calendar'],
           ].map(([id, label]) => (
             <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>
               {label}
