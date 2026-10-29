@@ -825,3 +825,8 @@ textarea {
 .spacer {
   flex: 1;
 }
+
+.daynav button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}

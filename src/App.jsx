@@ -109,33 +109,88 @@ export function StrikeCard({ strikes, month, onJump }) {
               </div>
               <div className="strikes-dates">
                 {misses.map((m) => (
-                  <button key={m.date} onClick={() => onJump(m.date)}>
+                  <button key={m.date} onClick={() => onJump(m)}>
                     {m.week ? `Week of ${short(m.date)} · ${m.count} missed` : short(m.date)}
                   </button>
                 ))}
               </div>
             </li>
           ))}
-          <li className="muted strikes-hint">Tap a date to open that day. Checking a task off or punching there removes the strike.</li>
+          <li className="muted strikes-hint">Tap a date to open it. Checking the task off, or punching that week, removes the strike.</li>
         </ul>
       )}
     </section>
   )
 }
 
-export function PunchCard({ task, punches, dateKey, todayKey, onPunch, onPunchDay, onEdit }) {
+export function PunchTab({ tasks, doneKeys, weekKey, todayKey, onWeek, onPunch, onEdit }) {
+  const ws = fromDateKey(weekKey)
+  const weekEndKey = toDateKey(addDays(ws, 6))
+  const isThisWeek = weekKey === toDateKey(weekStart(fromDateKey(todayKey)))
+  const short = (d) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const cards = tasks.filter((t) => t.frequency === 'punch' && isActiveOn(t, fromDateKey(weekEndKey)))
+
+  return (
+    <main>
+      <div className="daynav">
+        <button aria-label="Previous week" onClick={() => onWeek(toDateKey(addDays(ws, -7)))}>
+          ‹
+        </button>
+        <div className="daytitle">
+          <h1>{isThisWeek ? 'This week' : `Week of ${short(ws)}`}</h1>
+          <span className="muted">
+            {short(ws)} – {short(addDays(ws, 6))}
+          </span>
+        </div>
+        <button aria-label="Next week" disabled={isThisWeek} onClick={() => onWeek(toDateKey(addDays(ws, 7)))}>
+          ›
+        </button>
+      </div>
+      {!isThisWeek && (
+        <button className="link center" onClick={() => onWeek(toDateKey(weekStart(fromDateKey(todayKey))))}>
+          Jump to this week
+        </button>
+      )}
+
+      {cards.length === 0 ? (
+        <p className="empty">
+          {tasks.some((t) => t.frequency === 'punch')
+            ? 'No punch cards existed this week.'
+            : 'No punch cards yet. Tap + to add one, like “Go to the gym, 4× a week”.'}
+        </p>
+      ) : (
+        <ul className="list">
+          {cards.map((t) => (
+            <PunchCard
+              key={t.id}
+              task={t}
+              punches={punchesInWeek(t, doneKeys, ws)}
+              weekKey={weekKey}
+              todayKey={todayKey}
+              isThisWeek={isThisWeek}
+              onPunchDay={(key) => onPunch(t, key)}
+              onEdit={() => onEdit(t)}
+            />
+          ))}
+        </ul>
+      )}
+    </main>
+  )
+}
+
+export function PunchCard({ task, punches, weekKey, todayKey, isThisWeek, onPunchDay, onEdit }) {
   const target = task.punch_target
-  const punchedToday = punches.includes(dateKey)
+  const punchedToday = punches.includes(todayKey)
   const holes = Math.max(target, punches.length)
   const complete = punches.length >= target
-  const ws = weekStart(fromDateKey(dateKey))
+  const ws = fromDateKey(weekKey)
   const weekDays = Array.from({ length: 7 }, (_, i) => toDateKey(addDays(ws, i)))
   return (
     <li className={complete ? 'punch complete' : 'punch'}>
       <div className="punch-head">
         <span className="label">{task.title}</span>
         <span className="muted">
-          {punches.length}/{target} this week
+          {punches.length}/{target} {isThisWeek ? 'this week' : 'that week'}
         </span>
         <button className="edit" aria-label={`Edit ${task.title}`} onClick={onEdit}>
           <PencilIcon />
@@ -148,11 +203,13 @@ export function PunchCard({ task, punches, dateKey, todayKey, onPunch, onPunchDa
           </span>
         ))}
       </div>
-      <button className={punchedToday ? 'punch-btn punched' : 'punch-btn primary'} onClick={onPunch}>
-        {punchedToday ? 'Punched ✓ (tap to undo)' : 'Punch'}
-      </button>
+      {isThisWeek && (
+        <button className={punchedToday ? 'punch-btn punched' : 'punch-btn primary'} onClick={() => onPunchDay(todayKey)}>
+          {punchedToday ? 'Punched today ✓ (tap to undo)' : 'Punch today'}
+        </button>
+      )}
       <div className="punch-days">
-        <span className="muted">Forgot one? Tap a day this week:</span>
+        <span className="muted">{isThisWeek ? 'Forgot one? Tap a day this week:' : 'Tap a day to punch it:'}</span>
         <div className="days">
           {weekDays.map((key) => {
             const punched = punches.includes(key)
@@ -190,8 +247,9 @@ function Checklist({ user }) {
   const [doneKeys, setDoneKeys] = useState(new Set()) // "taskId|date" for every completion in [rangeStart, rangeEnd]
   const [doneLoaded, setDoneLoaded] = useState(false)
   const [date, setDate] = useState(() => new Date())
+  const [punchWeekKey, setPunchWeekKey] = useState(() => toDateKey(weekStart(new Date()))) // Monday of the week on the Punch tab
   const [tab, setTab] = useState('today')
-  const [editing, setEditing] = useState(null) // null | 'new' | task
+  const [editing, setEditing] = useState(null) // null | 'new' | 'new-punch' | task
   const [agenda, setAgenda] = useState([])
   const [agendaSetupNeeded, setAgendaSetupNeeded] = useState(false)
   const [editingAgenda, setEditingAgenda] = useState(null) // null | 'new' | item
@@ -203,12 +261,10 @@ function Checklist({ user }) {
   const monthStartKey = todayKey.slice(0, 8) + '01' // strikes and completion rate reset on the 1st
 
   // load completions covering this month's stats (back to the Monday before the 1st, for punch
-  // weeks), the whole week being viewed, and upcoming due dates shown on the viewed day
-  const viewWeekStart = weekStart(date)
+  // weeks), the day being viewed plus its upcoming due dates, and the week on the Punch tab
   const minKey = (a, b) => (a < b ? a : b)
   const maxKey = (a, b) => (a > b ? a : b)
-  const rangeStart = minKey(toDateKey(weekStart(fromDateKey(monthStartKey))), toDateKey(viewWeekStart))
-  const viewWeekEndKey = toDateKey(addDays(viewWeekStart, 6))
+  const rangeStart = [toDateKey(weekStart(fromDateKey(monthStartKey))), dateKey, punchWeekKey].reduce(minKey)
   const rangeEnd = maxKey(todayKey, toDateKey(addDays(date, 62)))
 
   useEffect(() => {
@@ -294,10 +350,6 @@ function Checklist({ user }) {
     [tasks, date],
   )
   const isDone = ({ task, dueKey }) => doneKeys.has(`${task.id}|${dueKey}`)
-  const punchCards = useMemo(
-    () => tasks.filter((t) => t.frequency === 'punch' && isActiveOn(t, fromDateKey(viewWeekEndKey))),
-    [tasks, viewWeekEndKey],
-  )
   const completed = due.filter(isDone).length
   const stats = useMemo(
     () => scoreMonth(tasks, doneKeys, monthStartKey, todayKey),
@@ -328,7 +380,7 @@ function Checklist({ user }) {
   )
 
   async function save(fields) {
-    const existing = editing !== 'new' ? editing : null
+    const existing = typeof editing === 'string' ? null : editing
     const { data, error } = existing
       ? await supabase.from('tasks').update(fields).eq('id', existing.id).select().single()
       : await supabase.from('tasks').insert(fields).select().single()
@@ -356,6 +408,7 @@ function Checklist({ user }) {
           {[
             ['today', 'Today'],
             ['agenda', 'Agenda'],
+            ['punch', 'Punch'],
             ['tasks', 'Tasks'],
             ['calendar', 'Calendar'],
           ].map(([id, label]) => (
@@ -382,7 +435,17 @@ function Checklist({ user }) {
           {loaded && doneLoaded && (
             <>
               <RateCard due={stats.due} done={stats.done} month={monthName} />
-              <StrikeCard strikes={stats.misses} month={monthName} onJump={(key) => setDate(fromDateKey(key))} />
+              <StrikeCard
+                strikes={stats.misses}
+                month={monthName}
+                onJump={(miss) => {
+                  // punch-card misses open that week on the Punch tab; others open the day here
+                  if (miss.week) {
+                    setPunchWeekKey(miss.date)
+                    setTab('punch')
+                  } else setDate(fromDateKey(miss.date))
+                }}
+              />
             </>
           )}
           <div className="daynav">
@@ -414,9 +477,7 @@ function Checklist({ user }) {
           {!loaded ? (
             <p className="muted center">Loading…</p>
           ) : due.length === 0 ? (
-            punchCards.length === 0 && (
-              <p className="empty">{tasks.length ? 'Nothing due this day 🎉' : 'No tasks yet — add your first one.'}</p>
-            )
+            <p className="empty">{tasks.length ? 'Nothing due this day 🎉' : 'No tasks yet — add your first one.'}</p>
           ) : (
             <ul className="list">
               {due.map((o) => (
@@ -438,27 +499,17 @@ function Checklist({ user }) {
             </ul>
           )}
           {due.length > 0 && completed === due.length && <p className="center muted">All done ✓</p>}
-
-          {loaded && punchCards.length > 0 && (
-            <>
-              <h2 className="section-title">Punch cards</h2>
-              <ul className="list">
-                {punchCards.map((t) => (
-                  <PunchCard
-                    key={t.id}
-                    task={t}
-                    punches={punchesInWeek(t, doneKeys, date)}
-                    dateKey={dateKey}
-                    todayKey={todayKey}
-                    onPunch={() => toggle(t, dateKey)}
-                    onPunchDay={(key) => toggle(t, key)}
-                    onEdit={() => setEditing(t)}
-                  />
-                ))}
-              </ul>
-            </>
-          )}
         </main>
+      ) : tab === 'punch' ? (
+        <PunchTab
+          tasks={tasks}
+          doneKeys={doneKeys}
+          weekKey={punchWeekKey}
+          todayKey={todayKey}
+          onWeek={setPunchWeekKey}
+          onPunch={toggle}
+          onEdit={setEditing}
+        />
       ) : tab === 'calendar' ? (
         <Calendar
           tasks={tasks}
@@ -503,8 +554,8 @@ function Checklist({ user }) {
       {!(tab === 'agenda' && agendaSetupNeeded) && (
         <button
           className="fab"
-          aria-label={tab === 'agenda' ? 'Add agenda item' : 'Add task'}
-          onClick={() => (tab === 'agenda' ? setEditingAgenda('new') : setEditing('new'))}
+          aria-label={tab === 'agenda' ? 'Add agenda item' : tab === 'punch' ? 'Add punch card' : 'Add task'}
+          onClick={() => (tab === 'agenda' ? setEditingAgenda('new') : setEditing(tab === 'punch' ? 'new-punch' : 'new'))}
         >
           +
         </button>
@@ -512,7 +563,8 @@ function Checklist({ user }) {
 
       {editing && (
         <TaskForm
-          task={editing === 'new' ? null : editing}
+          task={typeof editing === 'string' ? null : editing}
+          defaultFrequency={editing === 'new-punch' ? 'punch' : 'daily'}
           onSave={save}
           onDelete={remove}
           onClose={() => setEditing(null)}

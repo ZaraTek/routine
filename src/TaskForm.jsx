@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { WEEKDAYS, WEEKDAY_NAMES } from './schedule'
 
-export default function TaskForm({ task, onSave, onDelete, onClose }) {
+export default function TaskForm({ task, defaultFrequency = 'daily', onSave, onDelete, onClose }) {
   const [title, setTitle] = useState(task?.title ?? '')
-  const [frequency, setFrequency] = useState(task?.frequency ?? 'daily')
+  const [frequency, setFrequency] = useState(task?.frequency ?? defaultFrequency)
   const [weekdays, setWeekdays] = useState(task?.weekdays ?? [new Date().getDay()])
   const [monthDay, setMonthDay] = useState(task?.month_day ?? new Date().getDate())
   const [punchTarget, setPunchTarget] = useState(task?.punch_target ?? 3)
