@@ -6,7 +6,7 @@ import {
   describeSchedule,
   fromDateKey,
   isActiveOn,
-  isDueOn,
+  nextDueOn,
   punchesInWeek,
   scoreMonth,
   toDateKey,
@@ -180,13 +180,13 @@ function Checklist({ user }) {
   const monthStartKey = todayKey.slice(0, 8) + '01' // strikes and completion rate reset on the 1st
 
   // load completions covering this month's stats (back to the Monday before the 1st, for punch
-  // weeks) and the whole week being viewed
+  // weeks), the whole week being viewed, and upcoming due dates shown on the viewed day
   const viewWeekStart = weekStart(date)
   const minKey = (a, b) => (a < b ? a : b)
   const maxKey = (a, b) => (a > b ? a : b)
   const rangeStart = minKey(toDateKey(weekStart(fromDateKey(monthStartKey))), toDateKey(viewWeekStart))
   const viewWeekEndKey = toDateKey(addDays(viewWeekStart, 6))
-  const rangeEnd = maxKey(todayKey, viewWeekEndKey)
+  const rangeEnd = maxKey(todayKey, toDateKey(addDays(date, 62)))
 
   useEffect(() => {
     supabase
@@ -260,8 +260,17 @@ function Checklist({ user }) {
 
   const agendaDueCount = agenda.filter((a) => !a.done_at && a.due_date <= todayKey).length
 
-  const isDone = (task) => doneKeys.has(`${task.id}|${dateKey}`)
-  const due = useMemo(() => tasks.filter((t) => isDueOn(t, date)), [tasks, date])
+  // each day/weekly/monthly task's next occurrence as of the viewed day, soonest first
+  const due = useMemo(
+    () =>
+      tasks
+        .filter((t) => t.frequency !== 'punch')
+        .map((task) => ({ task, dueKey: nextDueOn(task, date) }))
+        .filter((o) => o.dueKey)
+        .sort((a, b) => a.dueKey.localeCompare(b.dueKey)),
+    [tasks, date],
+  )
+  const isDone = ({ task, dueKey }) => doneKeys.has(`${task.id}|${dueKey}`)
   const punchCards = useMemo(
     () => tasks.filter((t) => t.frequency === 'punch' && isActiveOn(t, fromDateKey(viewWeekEndKey))),
     [tasks, viewWeekEndKey],
@@ -272,10 +281,10 @@ function Checklist({ user }) {
     [tasks, doneKeys, monthStartKey, todayKey],
   )
 
-  // check off a day task, or punch a punch card, on the day being viewed
+  // check off an occurrence (stored under its due date), or punch a punch card (stored under the day punched)
   const toggle = useCallback(
-    async (task) => {
-      const key = `${task.id}|${dateKey}`
+    async (task, onKey) => {
+      const key = `${task.id}|${onKey}`
       const wasDone = doneKeys.has(key)
       const apply = (checked) =>
         setDoneKeys((cur) => {
@@ -285,14 +294,14 @@ function Checklist({ user }) {
         })
       apply(!wasDone)
       const { error } = wasDone
-        ? await supabase.from('completions').delete().eq('task_id', task.id).eq('date', dateKey)
-        : await supabase.from('completions').upsert({ task_id: task.id, date: dateKey }, { onConflict: 'task_id,date' })
+        ? await supabase.from('completions').delete().eq('task_id', task.id).eq('date', onKey)
+        : await supabase.from('completions').upsert({ task_id: task.id, date: onKey }, { onConflict: 'task_id,date' })
       if (error) {
         setError(error.message)
         apply(wasDone)
       }
     },
-    [doneKeys, dateKey],
+    [doneKeys],
   )
 
   async function save(fields) {
@@ -314,7 +323,7 @@ function Checklist({ user }) {
 
   const isToday = dateKey === toDateKey(new Date())
   const pct = due.length ? Math.round((completed / due.length) * 100) : 0
-  const isStrikeDay = dateKey >= monthStartKey && dateKey < todayKey
+  const isStrike = (o) => o.dueKey >= monthStartKey && o.dueKey < todayKey && !isDone(o)
   const monthName = new Date().toLocaleDateString(undefined, { month: 'long' })
 
   return (
@@ -387,18 +396,18 @@ function Checklist({ user }) {
             )
           ) : (
             <ul className="list">
-              {due.map((t) => (
-                <li key={t.id} className="check-row">
-                  <label className={isDone(t) ? 'check done' : 'check'}>
-                    <input type="checkbox" checked={isDone(t)} onChange={() => toggle(t)} />
+              {due.map((o) => (
+                <li key={o.task.id} className="check-row">
+                  <label className={isDone(o) ? 'check done' : 'check'}>
+                    <input type="checkbox" checked={isDone(o)} onChange={() => toggle(o.task, o.dueKey)} />
                     <span className="box" aria-hidden />
                     <span className="task-text">
-                      <span className="label">{t.title}</span>
-                      <span className="task-due">Due: {describeDue(t, date, todayKey)}</span>
+                      <span className="label">{o.task.title}</span>
+                      <span className="task-due">Due: {describeDue(o.dueKey, todayKey)}</span>
                     </span>
-                    {isStrikeDay && !isDone(t) && <span className="strike-tag">Strike</span>}
+                    {isStrike(o) && <span className="strike-tag">Strike</span>}
                   </label>
-                  <button className="edit" aria-label={`Edit ${t.title}`} onClick={() => setEditing(t)}>
+                  <button className="edit" aria-label={`Edit ${o.task.title}`} onClick={() => setEditing(o.task)}>
                     <PencilIcon />
                   </button>
                 </li>
@@ -417,7 +426,7 @@ function Checklist({ user }) {
                     task={t}
                     punches={punchesInWeek(t, doneKeys, date)}
                     dateKey={dateKey}
-                    onPunch={() => toggle(t)}
+                    onPunch={() => toggle(t, dateKey)}
                     onEdit={() => setEditing(t)}
                   />
                 ))}

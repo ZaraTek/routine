@@ -138,15 +138,25 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0])
 }
 
-// "today" / "Thursday" / "the 15th": when this occurrence (on `date`) is due
-export function describeDue(task, date, todayKey) {
-  if (task.frequency === 'weekly') return date.toLocaleDateString(undefined, { weekday: 'long' })
-  if (task.frequency === 'monthly') return `the ${ordinal(date.getDate())}`
-  const days = Math.round((fromDateKey(toDateKey(date)) - fromDateKey(todayKey)) / 86400000)
+// The occurrence shown on the checklist for `date`: the first due date on or after it.
+// So a weekly/monthly task shows up the day after its previous due date and stays until it's due.
+export function nextDueOn(task, date) {
+  if (!isActiveOn(task, date)) return null
+  for (let i = 0, d = date; i <= 62; i++, d = addDays(d, 1)) {
+    if (isDueOn(task, d)) return toDateKey(d)
+  }
+  return null
+}
+
+// "today" / "tomorrow" / "Thursday" / "Sat, Nov 15": when a due date is, relative to today
+export function describeDue(dueKey, todayKey) {
+  const days = Math.round((fromDateKey(dueKey) - fromDateKey(todayKey)) / 86400000)
   if (days === 0) return 'today'
   if (days === -1) return 'yesterday'
   if (days === 1) return 'tomorrow'
-  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+  const due = fromDateKey(dueKey)
+  if (days > 1 && days < 7) return due.toLocaleDateString(undefined, { weekday: 'long' })
+  return due.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 export function describeSchedule(task) {
