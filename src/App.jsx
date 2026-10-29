@@ -14,6 +14,7 @@ import {
 } from './schedule'
 import Auth from './Auth'
 import Calendar from './Calendar'
+import Agenda, { AgendaForm } from './Agenda'
 import TaskForm from './TaskForm'
 
 export default function App() {
@@ -167,6 +168,9 @@ function Checklist({ user }) {
   const [date, setDate] = useState(() => new Date())
   const [tab, setTab] = useState('today')
   const [editing, setEditing] = useState(null) // null | 'new' | task
+  const [agenda, setAgenda] = useState([])
+  const [agendaSetupNeeded, setAgendaSetupNeeded] = useState(false)
+  const [editingAgenda, setEditingAgenda] = useState(null) // null | 'new' | item
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
@@ -212,6 +216,48 @@ function Checklist({ user }) {
       stale = true
     }
   }, [rangeStart, rangeEnd])
+
+  useEffect(() => {
+    supabase
+      .from('agenda')
+      .select('*')
+      .then(({ data, error }) => {
+        // the agenda table comes from a later migration; prompt for it instead of erroring
+        if (error && /agenda/.test(error.message)) setAgendaSetupNeeded(true)
+        else if (error) setError(error.message)
+        else setAgenda(data)
+      })
+  }, [])
+
+  async function toggleAgenda(item) {
+    const done_at = item.done_at ? null : new Date().toISOString()
+    const apply = (value) => setAgenda((cur) => cur.map((a) => (a.id === item.id ? { ...a, done_at: value } : a)))
+    apply(done_at)
+    const { error } = await supabase.from('agenda').update({ done_at }).eq('id', item.id)
+    if (error) {
+      setError(error.message)
+      apply(item.done_at)
+    }
+  }
+
+  async function saveAgenda(fields) {
+    const existing = editingAgenda !== 'new' ? editingAgenda : null
+    const { data, error } = existing
+      ? await supabase.from('agenda').update(fields).eq('id', existing.id).select().single()
+      : await supabase.from('agenda').insert(fields).select().single()
+    if (error) return setError(error.message)
+    setAgenda((cur) => (existing ? cur.map((a) => (a.id === data.id ? data : a)) : [...cur, data]))
+    setEditingAgenda(null)
+  }
+
+  async function removeAgenda() {
+    const { error } = await supabase.from('agenda').delete().eq('id', editingAgenda.id)
+    if (error) return setError(error.message)
+    setAgenda((cur) => cur.filter((a) => a.id !== editingAgenda.id))
+    setEditingAgenda(null)
+  }
+
+  const agendaDueCount = agenda.filter((a) => !a.done_at && a.due_date <= todayKey).length
 
   const isDone = (task) => doneKeys.has(`${task.id}|${dateKey}`)
   const due = useMemo(() => tasks.filter((t) => isDueOn(t, date)), [tasks, date])
@@ -274,19 +320,22 @@ function Checklist({ user }) {
     <div className="app">
       <header>
         <nav className="tabs">
-          <button className={tab === 'today' ? 'active' : ''} onClick={() => setTab('today')}>
-            Checklist
-          </button>
-          <button className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>
-            Calendar
-          </button>
-          <button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>
-            Tasks
-          </button>
+          {[
+            ['today', 'Today'],
+            ['calendar', 'Calendar'],
+            ['agenda', 'Agenda'],
+            ['tasks', 'Tasks'],
+          ].map(([id, label]) => (
+            <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>
+              {label}
+              {id === 'agenda' && agendaDueCount > 0 && (
+                <span className="tab-badge" aria-label={`${agendaDueCount} due`}>
+                  {agendaDueCount}
+                </span>
+              )}
+            </button>
+          ))}
         </nav>
-        <button className="link" onClick={() => supabase.auth.signOut()} title={user.email}>
-          Sign out
-        </button>
       </header>
 
       {error && (
@@ -381,6 +430,14 @@ function Checklist({ user }) {
             setTab('today')
           }}
         />
+      ) : tab === 'agenda' ? (
+        <Agenda
+          items={agenda}
+          todayKey={todayKey}
+          setupNeeded={agendaSetupNeeded}
+          onToggle={toggleAgenda}
+          onEdit={setEditingAgenda}
+        />
       ) : (
         <main>
           <h1>All tasks</h1>
@@ -398,12 +455,22 @@ function Checklist({ user }) {
               </li>
             ))}
           </ul>
+          <div className="account">
+            <span className="muted">Signed in as {user.email}</span>
+            <button onClick={() => supabase.auth.signOut()}>Sign out</button>
+          </div>
         </main>
       )}
 
-      <button className="fab" aria-label="Add task" onClick={() => setEditing('new')}>
-        +
-      </button>
+      {!(tab === 'agenda' && agendaSetupNeeded) && (
+        <button
+          className="fab"
+          aria-label={tab === 'agenda' ? 'Add agenda item' : 'Add task'}
+          onClick={() => (tab === 'agenda' ? setEditingAgenda('new') : setEditing('new'))}
+        >
+          +
+        </button>
+      )}
 
       {editing && (
         <TaskForm
@@ -411,6 +478,14 @@ function Checklist({ user }) {
           onSave={save}
           onDelete={remove}
           onClose={() => setEditing(null)}
+        />
+      )}
+      {editingAgenda && (
+        <AgendaForm
+          item={editingAgenda === 'new' ? null : editingAgenda}
+          onSave={saveAgenda}
+          onDelete={removeAgenda}
+          onClose={() => setEditingAgenda(null)}
         />
       )}
     </div>
