@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isConfigured, supabase } from './supabase'
 import {
   addDays,
+  describeDue,
   describeSchedule,
   fromDateKey,
   isActiveOn,
@@ -391,7 +392,10 @@ function Checklist({ user }) {
                   <label className={isDone(t) ? 'check done' : 'check'}>
                     <input type="checkbox" checked={isDone(t)} onChange={() => toggle(t)} />
                     <span className="box" aria-hidden />
-                    <span className="label">{t.title}</span>
+                    <span className="task-text">
+                      <span className="label">{t.title}</span>
+                      <span className="task-due">Due: {describeDue(t, date, todayKey)}</span>
+                    </span>
                     {isStrikeDay && !isDone(t) && <span className="strike-tag">Strike</span>}
                   </label>
                   <button className="edit" aria-label={`Edit ${t.title}`} onClick={() => setEditing(t)}>

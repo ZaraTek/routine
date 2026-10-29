@@ -138,6 +138,17 @@ function ordinal(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0])
 }
 
+// "today" / "Thursday" / "the 15th": when this occurrence (on `date`) is due
+export function describeDue(task, date, todayKey) {
+  if (task.frequency === 'weekly') return date.toLocaleDateString(undefined, { weekday: 'long' })
+  if (task.frequency === 'monthly') return `the ${ordinal(date.getDate())}`
+  const days = Math.round((fromDateKey(toDateKey(date)) - fromDateKey(todayKey)) / 86400000)
+  if (days === 0) return 'today'
+  if (days === -1) return 'yesterday'
+  if (days === 1) return 'tomorrow'
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
 export function describeSchedule(task) {
   if (task.frequency === 'punch') return `${task.punch_target}× a week`
   if (task.frequency === 'daily') return 'Every day'
