@@ -830,3 +830,60 @@ textarea {
   opacity: 0.35;
   cursor: default;
 }
+
+/* ---------- home dashboard ---------- */
+.home-section .section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.section-count {
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+.section-link {
+  margin-left: auto;
+  font-size: 0.85rem;
+  padding: 0;
+}
+.section-empty {
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+}
+.punch-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 10px 10px 16px;
+}
+.punch-row.met {
+  border-color: color-mix(in srgb, var(--ok) 50%, var(--border));
+}
+.punch-row .task-text {
+  flex: 1;
+}
+.mini-holes {
+  display: flex;
+  gap: 4px;
+}
+.mini-holes span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--muted);
+}
+.mini-holes span.punched {
+  border: 1.5px solid var(--ok);
+  background: var(--ok);
+}
+.punch-row button {
+  flex: none;
+  min-width: 72px;
+}
+.punch-row button.punched {
+  color: var(--ok);
+  font-weight: 700;
+}

@@ -15,7 +15,7 @@ import {
 } from './schedule'
 import Auth from './Auth'
 import Calendar from './Calendar'
-import Agenda, { AgendaForm } from './Agenda'
+import Agenda, { AgendaForm, AgendaRow } from './Agenda'
 import TaskForm from './TaskForm'
 
 export default function App() {
@@ -233,6 +233,48 @@ export function PunchCard({ task, punches, weekKey, todayKey, isThisWeek, onPunc
   )
 }
 
+function HomeSection({ title, count, link, empty, children }) {
+  const items = [children].flat().filter(Boolean)
+  if (!items.length && !empty) return null
+  return (
+    <section className="home-section">
+      <h2 className="section-title">
+        {title}
+        {count && <span className="section-count">{count}</span>}
+        {link && (
+          <button className="link section-link" onClick={link[1]}>
+            {link[0]} ›
+          </button>
+        )}
+      </h2>
+      {items.length ? <ul className="list">{items}</ul> : <p className="muted section-empty">{empty}</p>}
+    </section>
+  )
+}
+
+function PunchRow({ task, punches, punched, onPunch }) {
+  const target = task.punch_target
+  const met = punches.length >= target
+  return (
+    <li className={met ? 'punch-row met' : 'punch-row'}>
+      <span className="task-text">
+        <span className="label">{task.title}</span>
+        <span className="task-due">
+          {punches.length}/{target} this week{met ? ' ✓' : ''}
+        </span>
+      </span>
+      <span className="mini-holes" aria-hidden>
+        {Array.from({ length: Math.max(target, punches.length) }, (_, i) => (
+          <span key={i} className={i < punches.length ? 'punched' : ''} />
+        ))}
+      </span>
+      <button className={punched ? 'punched' : 'primary'} onClick={onPunch} aria-pressed={punched}>
+        {punched ? '✓' : 'Punch'}
+      </button>
+    </li>
+  )
+}
+
 function formatDay(date) {
   const today = toDateKey(new Date())
   const key = toDateKey(date)
@@ -248,11 +290,12 @@ function Checklist({ user }) {
   const [doneLoaded, setDoneLoaded] = useState(false)
   const [date, setDate] = useState(() => new Date())
   const [punchWeekKey, setPunchWeekKey] = useState(() => toDateKey(weekStart(new Date()))) // Monday of the week on the Punch tab
-  const [tab, setTab] = useState('today')
+  const [tab, setTab] = useState('home')
   const [editing, setEditing] = useState(null) // null | 'new' | 'new-punch' | task
   const [agenda, setAgenda] = useState([])
   const [agendaSetupNeeded, setAgendaSetupNeeded] = useState(false)
   const [editingAgenda, setEditingAgenda] = useState(null) // null | 'new' | item
+  const [showDone, setShowDone] = useState(false)
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
@@ -264,7 +307,7 @@ function Checklist({ user }) {
   // weeks), the day being viewed plus its upcoming due dates, and the week on the Punch tab
   const minKey = (a, b) => (a < b ? a : b)
   const maxKey = (a, b) => (a > b ? a : b)
-  const rangeStart = [toDateKey(weekStart(fromDateKey(monthStartKey))), dateKey, punchWeekKey].reduce(minKey)
+  const rangeStart = [toDateKey(weekStart(fromDateKey(monthStartKey))), toDateKey(weekStart(date)), punchWeekKey].reduce(minKey)
   const rangeEnd = maxKey(todayKey, toDateKey(addDays(date, 62)))
 
   useEffect(() => {
@@ -350,7 +393,6 @@ function Checklist({ user }) {
     [tasks, date],
   )
   const isDone = ({ task, dueKey }) => doneKeys.has(`${task.id}|${dueKey}`)
-  const completed = due.filter(isDone).length
   const stats = useMemo(
     () => scoreMonth(tasks, doneKeys, monthStartKey, todayKey),
     [tasks, doneKeys, monthStartKey, todayKey],
@@ -397,16 +439,49 @@ function Checklist({ user }) {
   }
 
   const isToday = dateKey === toDateKey(new Date())
-  const pct = due.length ? Math.round((completed / due.length) * 100) : 0
   const isStrike = (o) => o.dueKey >= monthStartKey && o.dueKey < todayKey && !isDone(o)
   const monthName = new Date().toLocaleDateString(undefined, { month: 'long' })
+
+  // Home dashboard, in priority order: due on the viewed day, punch cards, assignments, weekly, monthly
+  const openDue = due.filter((o) => !isDone(o))
+  const doneDue = due.filter(isDone)
+  const todayOpen = openDue.filter((o) => o.dueKey === dateKey)
+  const todayTotal = due.filter((o) => o.dueKey === dateKey).length
+  const todayDone = todayTotal - todayOpen.length
+  const weeklyOpen = openDue.filter((o) => o.dueKey !== dateKey && o.task.frequency === 'weekly')
+  const monthlyOpen = openDue.filter((o) => o.dueKey !== dateKey && o.task.frequency === 'monthly')
+  const homePunch = tasks
+    .filter((t) => t.frequency === 'punch' && isActiveOn(t, addDays(weekStart(date), 6)))
+    .map((task) => ({ task, punches: punchesInWeek(task, doneKeys, date) }))
+    .sort((a, b) => (a.punches.length >= a.task.punch_target) - (b.punches.length >= b.task.punch_target))
+  const weekAheadKey = toDateKey(addDays(new Date(), 7))
+  const homeAgenda = agenda
+    .filter((a) => !a.done_at && a.due_date <= weekAheadKey) // overdue + next 7 days
+    .sort((a, b) => (a.due_date + (a.due_time ?? '99')).localeCompare(b.due_date + (b.due_time ?? '99')))
+
+  const renderTaskRow = (o) => (
+    <li key={o.task.id} className="check-row">
+      <label className={isDone(o) ? 'check done' : 'check'}>
+        <input type="checkbox" checked={isDone(o)} onChange={() => toggle(o.task, o.dueKey)} />
+        <span className="box" aria-hidden />
+        <span className="task-text">
+          <span className="label">{o.task.title}</span>
+          <span className="task-due">Due: {describeDue(o.dueKey, todayKey)}</span>
+        </span>
+        {isStrike(o) && <span className="strike-tag">Strike</span>}
+      </label>
+      <button className="edit" aria-label={`Edit ${o.task.title}`} onClick={() => setEditing(o.task)}>
+        <PencilIcon />
+      </button>
+    </li>
+  )
 
   return (
     <div className="app">
       <header>
         <nav className="tabs">
           {[
-            ['today', 'Today'],
+            ['home', 'Home'],
             ['agenda', 'Agenda'],
             ['punch', 'Punch'],
             ['tasks', 'Tasks'],
@@ -430,7 +505,7 @@ function Checklist({ user }) {
         </p>
       )}
 
-      {tab === 'today' ? (
+      {tab === 'home' ? (
         <main>
           {loaded && doneLoaded && (
             <>
@@ -468,37 +543,55 @@ function Checklist({ user }) {
             </button>
           )}
 
-          {due.length > 0 && (
-            <div className="progress" aria-label={`${completed} of ${due.length} done`}>
-              <div style={{ width: `${pct}%` }} />
-            </div>
-          )}
-
           {!loaded ? (
             <p className="muted center">Loading…</p>
-          ) : due.length === 0 ? (
-            <p className="empty">{tasks.length ? 'Nothing due this day 🎉' : 'No tasks yet — add your first one.'}</p>
+          ) : !tasks.length && !agenda.length ? (
+            <p className="empty">Nothing here yet. Tap + to add your first task.</p>
           ) : (
-            <ul className="list">
-              {due.map((o) => (
-                <li key={o.task.id} className="check-row">
-                  <label className={isDone(o) ? 'check done' : 'check'}>
-                    <input type="checkbox" checked={isDone(o)} onChange={() => toggle(o.task, o.dueKey)} />
-                    <span className="box" aria-hidden />
-                    <span className="task-text">
-                      <span className="label">{o.task.title}</span>
-                      <span className="task-due">Due: {describeDue(o.dueKey, todayKey)}</span>
-                    </span>
-                    {isStrike(o) && <span className="strike-tag">Strike</span>}
-                  </label>
-                  <button className="edit" aria-label={`Edit ${o.task.title}`} onClick={() => setEditing(o.task)}>
-                    <PencilIcon />
+            <>
+              <HomeSection
+                title="Today"
+                count={todayOpen.length ? `${todayDone} of ${todayTotal} done` : null}
+                empty={todayTotal ? 'Everything due today is done ✓' : 'Nothing due today 🎉'}
+              >
+                {todayOpen.map(renderTaskRow)}
+              </HomeSection>
+
+              {homePunch.length > 0 && (
+                <HomeSection title="Punch cards" link={['See all', () => setTab('punch')]}>
+                  {homePunch.map(({ task, punches }) => (
+                    <PunchRow
+                      key={task.id}
+                      task={task}
+                      punches={punches}
+                      punched={punches.includes(dateKey)}
+                      onPunch={() => toggle(task, dateKey)}
+                    />
+                  ))}
+                </HomeSection>
+              )}
+
+              {!agendaSetupNeeded && (
+                <HomeSection title="Assignments" link={['Agenda', () => setTab('agenda')]} empty="Nothing due in the next week">
+                  {homeAgenda.map((item) => (
+                    <AgendaRow key={item.id} item={item} todayKey={todayKey} onToggle={toggleAgenda} onEdit={setEditingAgenda} />
+                  ))}
+                </HomeSection>
+              )}
+
+              {weeklyOpen.length > 0 && <HomeSection title="Weekly">{weeklyOpen.map(renderTaskRow)}</HomeSection>}
+              {monthlyOpen.length > 0 && <HomeSection title="Monthly">{monthlyOpen.map(renderTaskRow)}</HomeSection>}
+
+              {doneDue.length > 0 && (
+                <section className="home-section">
+                  <button className="link section-toggle" onClick={() => setShowDone(!showDone)} aria-expanded={showDone}>
+                    {showDone ? 'Hide' : 'Show'} done ({doneDue.length})
                   </button>
-                </li>
-              ))}
-            </ul>
+                  {showDone && <ul className="list">{doneDue.map(renderTaskRow)}</ul>}
+                </section>
+              )}
+            </>
           )}
-          {due.length > 0 && completed === due.length && <p className="center muted">All done ✓</p>}
         </main>
       ) : tab === 'punch' ? (
         <PunchTab
@@ -516,7 +609,7 @@ function Checklist({ user }) {
           onError={setError}
           onOpenDay={(key) => {
             setDate(fromDateKey(key))
-            setTab('today')
+            setTab('home')
           }}
         />
       ) : tab === 'agenda' ? (

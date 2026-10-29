@@ -104,7 +104,7 @@ export default function Agenda({ items, todayKey, setupNeeded, onToggle, onEdit 
   )
 }
 
-function AgendaRow({ item, todayKey, onToggle, onEdit }) {
+export function AgendaRow({ item, todayKey, onToggle, onEdit }) {
   const done = Boolean(item.done_at)
   return (
     <li className="check-row">
