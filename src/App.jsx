@@ -62,14 +62,19 @@ export function RateCard({ due, done, month }) {
   const tone = pct === null ? '' : pct >= 80 ? 'good' : pct >= 50 ? 'ok' : 'bad'
   return (
     <section className={`rate ${tone}`}>
-      <div className="rate-head">
-        <strong>{month} completion</strong>
+      <span className="tile-label">Completion</span>
+      <div className="rate-main">
+        <span
+          className="ring"
+          style={{ '--p': pct ?? 0 }}
+          role="progressbar"
+          aria-valuenow={pct ?? 0}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        />
         <span className="rate-pct">{pct === null ? '–' : `${pct}%`}</span>
       </div>
-      <div className="rate-bar" role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100}>
-        <div style={{ width: `${pct ?? 0}%` }} />
-      </div>
-      <span className="muted">{due ? `${done} of ${due} done this month` : 'Nothing due yet this month'}</span>
+      <span className="muted">{due ? `${done}/${due} in ${month}` : `Nothing due in ${month}`}</span>
     </section>
   )
 }
@@ -90,14 +95,19 @@ export function StrikeCard({ strikes, month, onJump }) {
   const short = (key) => fromDateKey(key).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 
   return (
-    <section className={n ? 'strikes has-strikes' : 'strikes'}>
+    <section className={['strikes', n && 'has-strikes', open && 'open'].filter(Boolean).join(' ')}>
       <button className="strikes-head" onClick={() => n && setOpen(!open)} aria-expanded={n ? open : undefined}>
-        <span className="strikes-count">{n}</span>
-        <span className="strikes-text">
-          <strong>{n === 1 ? 'strike' : 'strikes'} in {month}</strong>
-          <span className="muted">{n ? 'Missed tasks this month' : 'Nothing missed so far. Keep it up'}</span>
+        <span className="tile-label">
+          Strikes
+          {n > 0 && <span className="chevron">{open ? '⌃' : '⌄'}</span>}
         </span>
-        {n > 0 && <span className="chevron">{open ? '⌃' : '⌄'}</span>}
+        <span className="strikes-row">
+          <span className="strikes-count">{n}</span>
+          <span className="strikes-text">
+            <strong>{n === 1 ? 'strike' : 'strikes'}</strong>
+            <span className="muted">in {month}</span>
+          </span>
+        </span>
       </button>
       {open && (
         <ul className="strikes-list">
@@ -549,7 +559,7 @@ function Checklist({ user }) {
         {tab === 'home' ? (
           <main>
             {loaded && doneLoaded && (
-              <>
+              <div className="stats">
                 <RateCard due={stats.due} done={stats.done} month={monthName} />
                 <StrikeCard
                   strikes={stats.misses}
@@ -562,7 +572,7 @@ function Checklist({ user }) {
                     } else setDate(fromDateKey(miss.date))
                   }}
                 />
-              </>
+              </div>
             )}
             <div className="daynav">
               <button aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}>
