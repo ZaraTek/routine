@@ -17,7 +17,12 @@ export default function Auth() {
     const { data, error } =
       mode === 'signin'
         ? await supabase.auth.signInWithPassword({ email, password })
-        : await supabase.auth.signUp({ email, password })
+        : await supabase.auth.signUp({
+            email,
+            password,
+            // send the confirmation link back to wherever the app is running (must be in Supabase's Redirect URLs)
+            options: { emailRedirectTo: window.location.origin + window.location.pathname },
+          })
     setBusy(false)
     if (error) return setError(error.message)
     if (mode === 'signup' && !data.session) {
