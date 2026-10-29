@@ -6,6 +6,7 @@ export default function TaskForm({ task, onSave, onDelete, onClose }) {
   const [frequency, setFrequency] = useState(task?.frequency ?? 'daily')
   const [weekdays, setWeekdays] = useState(task?.weekdays ?? [new Date().getDay()])
   const [monthDay, setMonthDay] = useState(task?.month_day ?? new Date().getDate())
+  const [punchTarget, setPunchTarget] = useState(task?.punch_target ?? 3)
 
   function toggleDay(d) {
     setWeekdays((cur) => (cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d]))
@@ -16,12 +17,18 @@ export default function TaskForm({ task, onSave, onDelete, onClose }) {
   function submit(e) {
     e.preventDefault()
     if (invalid) return
-    onSave({
+    const fields = {
       title: title.trim(),
       frequency,
       weekdays: frequency === 'weekly' ? weekdays : [],
       month_day: frequency === 'monthly' ? Number(monthDay) : null,
-    })
+    }
+    // only send punch_target when punch cards are involved, so other tasks still save
+    // if the punch-card migration hasn't been run yet
+    if (frequency === 'punch' || task?.frequency === 'punch') {
+      fields.punch_target = frequency === 'punch' ? Number(punchTarget) : null
+    }
+    onSave(fields)
   }
 
   return (
@@ -42,7 +49,7 @@ export default function TaskForm({ task, onSave, onDelete, onClose }) {
         <div className="field">
           <span>Repeats</span>
           <div className="segmented">
-            {['daily', 'weekly', 'monthly'].map((f) => (
+            {['daily', 'weekly', 'monthly', 'punch'].map((f) => (
               <button
                 type="button"
                 key={f}
@@ -54,6 +61,26 @@ export default function TaskForm({ task, onSave, onDelete, onClose }) {
             ))}
           </div>
         </div>
+
+        {frequency === 'punch' && (
+          <div className="field">
+            <span>Times per week</span>
+            <div className="days">
+              {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+                <button
+                  type="button"
+                  key={n}
+                  aria-pressed={punchTarget === n}
+                  className={punchTarget === n ? 'active' : ''}
+                  onClick={() => setPunchTarget(n)}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <small className="muted">Punch any day you do it. Weeks run Monday to Sunday; each missed punch is a strike.</small>
+          </div>
+        )}
 
         {frequency === 'weekly' && (
           <div className="field">

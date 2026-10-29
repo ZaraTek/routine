@@ -4,9 +4,10 @@ create table if not exists tasks (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   title text not null,
-  frequency text not null check (frequency in ('daily', 'weekly', 'monthly')),
+  frequency text not null check (frequency in ('daily', 'weekly', 'monthly', 'punch')),
   weekdays int[] not null default '{}',   -- 0 = Sunday ... 6 = Saturday (weekly)
   month_day int,                          -- 1-31 (monthly; clamps to last day of short months)
+  punch_target int check (punch_target between 1 and 7), -- punches per Monday-Sunday week (punch)
   created_at timestamptz not null default now()
 );
 

@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { isConfigured, supabase } from './supabase'
-import { addDays, describeSchedule, findMisses, fromDateKey, isDueOn, toDateKey } from './schedule'
+import {
+  addDays,
+  describeSchedule,
+  fromDateKey,
+  isActiveOn,
+  isDueOn,
+  punchesInWeek,
+  scoreMonth,
+  toDateKey,
+  WEEKDAY_NAMES,
+  weekStart,
+} from './schedule'
 import Auth from './Auth'
+import Calendar from './Calendar'
 import TaskForm from './TaskForm'
 
 export default function App() {
@@ -43,17 +55,36 @@ function PencilIcon() {
   )
 }
 
+export function RateCard({ due, done, month }) {
+  const pct = due ? Math.round((done / due) * 100) : null
+  const tone = pct === null ? '' : pct >= 80 ? 'good' : pct >= 50 ? 'ok' : 'bad'
+  return (
+    <section className={`rate ${tone}`}>
+      <div className="rate-head">
+        <strong>{month} completion</strong>
+        <span className="rate-pct">{pct === null ? '–' : `${pct}%`}</span>
+      </div>
+      <div className="rate-bar" role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100}>
+        <div style={{ width: `${pct ?? 0}%` }} />
+      </div>
+      <span className="muted">{due ? `${done} of ${due} done this month` : 'Nothing due yet this month'}</span>
+    </section>
+  )
+}
+
 export function StrikeCard({ strikes, month, onJump }) {
   const [open, setOpen] = useState(false)
-  const n = strikes.length
+  const n = strikes.reduce((sum, s) => sum + s.count, 0)
 
-  // group missed days by task, worst first
+  // group misses by task, worst first
   const byTask = new Map()
   for (const s of strikes) {
-    if (!byTask.has(s.task.id)) byTask.set(s.task.id, { task: s.task, dates: [] })
-    byTask.get(s.task.id).dates.push(s.date)
+    if (!byTask.has(s.task.id)) byTask.set(s.task.id, { task: s.task, misses: [], total: 0 })
+    const g = byTask.get(s.task.id)
+    g.misses.push(s)
+    g.total += s.count
   }
-  const groups = [...byTask.values()].sort((a, b) => b.dates.length - a.dates.length)
+  const groups = [...byTask.values()].sort((a, b) => b.total - a.total)
   const short = (key) => fromDateKey(key).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 
   return (
@@ -68,25 +99,55 @@ export function StrikeCard({ strikes, month, onJump }) {
       </button>
       {open && (
         <ul className="strikes-list">
-          {groups.map(({ task, dates }) => (
+          {groups.map(({ task, misses, total }) => (
             <li key={task.id}>
               <div className="strikes-task">
                 <span>{task.title}</span>
-                <span className="strikes-badge">{dates.length}</span>
+                <span className="strikes-badge">{total}</span>
               </div>
               <div className="strikes-dates">
-                {dates.map((d) => (
-                  <button key={d} onClick={() => onJump(d)}>
-                    {short(d)}
+                {misses.map((m) => (
+                  <button key={m.date} onClick={() => onJump(m.date)}>
+                    {m.week ? `Week of ${short(m.date)} · ${m.count} missed` : short(m.date)}
                   </button>
                 ))}
               </div>
             </li>
           ))}
-          <li className="muted strikes-hint">Tap a date to open that day. Checking a task off there removes the strike.</li>
+          <li className="muted strikes-hint">Tap a date to open that day. Checking a task off or punching there removes the strike.</li>
         </ul>
       )}
     </section>
+  )
+}
+
+export function PunchCard({ task, punches, dateKey, onPunch, onEdit }) {
+  const target = task.punch_target
+  const punchedToday = punches.includes(dateKey)
+  const holes = Math.max(target, punches.length)
+  const complete = punches.length >= target
+  return (
+    <li className={complete ? 'punch complete' : 'punch'}>
+      <div className="punch-head">
+        <span className="label">{task.title}</span>
+        <span className="muted">
+          {punches.length}/{target} this week
+        </span>
+        <button className="edit" aria-label={`Edit ${task.title}`} onClick={onEdit}>
+          <PencilIcon />
+        </button>
+      </div>
+      <div className="holes" aria-hidden>
+        {Array.from({ length: holes }, (_, i) => (
+          <span key={i} className={i < punches.length ? 'hole punched' : 'hole'}>
+            {i < punches.length ? WEEKDAY_NAMES[fromDateKey(punches[i]).getDay()].slice(0, 2) : ''}
+          </span>
+        ))}
+      </div>
+      <button className={punchedToday ? 'punch-btn punched' : 'punch-btn primary'} onClick={onPunch}>
+        {punchedToday ? 'Punched ✓ (tap to undo)' : 'Punch'}
+      </button>
+    </li>
   )
 }
 
@@ -101,8 +162,8 @@ function formatDay(date) {
 
 function Checklist({ user }) {
   const [tasks, setTasks] = useState([])
-  const [done, setDone] = useState(new Set()) // task ids completed on `date`
-  const [monthDone, setMonthDone] = useState(new Set()) // "taskId|date" completed this month before today
+  const [doneKeys, setDoneKeys] = useState(new Set()) // "taskId|date" for every completion in [rangeStart, rangeEnd]
+  const [doneLoaded, setDoneLoaded] = useState(false)
   const [date, setDate] = useState(() => new Date())
   const [tab, setTab] = useState('today')
   const [editing, setEditing] = useState(null) // null | 'new' | task
@@ -111,7 +172,16 @@ function Checklist({ user }) {
 
   const dateKey = toDateKey(date)
   const todayKey = toDateKey(new Date())
-  const monthStartKey = todayKey.slice(0, 8) + '01' // strikes reset on the 1st
+  const monthStartKey = todayKey.slice(0, 8) + '01' // strikes and completion rate reset on the 1st
+
+  // load completions covering this month's stats (back to the Monday before the 1st, for punch
+  // weeks) and the whole week being viewed
+  const viewWeekStart = weekStart(date)
+  const minKey = (a, b) => (a < b ? a : b)
+  const maxKey = (a, b) => (a > b ? a : b)
+  const rangeStart = minKey(toDateKey(weekStart(fromDateKey(monthStartKey))), toDateKey(viewWeekStart))
+  const viewWeekEndKey = toDateKey(addDays(viewWeekStart, 6))
+  const rangeEnd = maxKey(todayKey, viewWeekEndKey)
 
   useEffect(() => {
     supabase
@@ -129,51 +199,43 @@ function Checklist({ user }) {
     let stale = false
     supabase
       .from('completions')
-      .select('task_id')
-      .eq('date', dateKey)
+      .select('task_id, date')
+      .gte('date', rangeStart)
+      .lte('date', rangeEnd)
       .then(({ data, error }) => {
         if (stale) return
         if (error) setError(error.message)
-        else setDone(new Set(data.map((r) => r.task_id)))
+        else setDoneKeys(new Set(data.map((r) => `${r.task_id}|${r.date}`)))
+        setDoneLoaded(true)
       })
     return () => {
       stale = true
     }
-  }, [dateKey])
+  }, [rangeStart, rangeEnd])
 
-  useEffect(() => {
-    supabase
-      .from('completions')
-      .select('task_id, date')
-      .gte('date', monthStartKey)
-      .lt('date', todayKey)
-      .then(({ data, error }) => {
-        if (error) setError(error.message)
-        else setMonthDone(new Set(data.map((r) => `${r.task_id}|${r.date}`)))
-      })
-  }, [monthStartKey, todayKey])
-
+  const isDone = (task) => doneKeys.has(`${task.id}|${dateKey}`)
   const due = useMemo(() => tasks.filter((t) => isDueOn(t, date)), [tasks, date])
-  const completed = due.filter((t) => done.has(t.id)).length
-  const strikes = useMemo(
-    () => findMisses(tasks, monthDone, monthStartKey, todayKey),
-    [tasks, monthDone, monthStartKey, todayKey],
+  const punchCards = useMemo(
+    () => tasks.filter((t) => t.frequency === 'punch' && isActiveOn(t, fromDateKey(viewWeekEndKey))),
+    [tasks, viewWeekEndKey],
+  )
+  const completed = due.filter(isDone).length
+  const stats = useMemo(
+    () => scoreMonth(tasks, doneKeys, monthStartKey, todayKey),
+    [tasks, doneKeys, monthStartKey, todayKey],
   )
 
+  // check off a day task, or punch a punch card, on the day being viewed
   const toggle = useCallback(
     async (task) => {
-      const wasDone = done.has(task.id)
-      const monthKey = `${task.id}|${dateKey}`
-      const inMonth = dateKey >= monthStartKey && dateKey < todayKey
-      const apply = (checked) => {
-        const update = (key) => (cur) => {
+      const key = `${task.id}|${dateKey}`
+      const wasDone = doneKeys.has(key)
+      const apply = (checked) =>
+        setDoneKeys((cur) => {
           const next = new Set(cur)
           checked ? next.add(key) : next.delete(key)
           return next
-        }
-        setDone(update(task.id))
-        if (inMonth) setMonthDone(update(monthKey))
-      }
+        })
       apply(!wasDone)
       const { error } = wasDone
         ? await supabase.from('completions').delete().eq('task_id', task.id).eq('date', dateKey)
@@ -183,7 +245,7 @@ function Checklist({ user }) {
         apply(wasDone)
       }
     },
-    [done, dateKey, monthStartKey, todayKey],
+    [doneKeys, dateKey],
   )
 
   async function save(fields) {
@@ -206,6 +268,7 @@ function Checklist({ user }) {
   const isToday = dateKey === toDateKey(new Date())
   const pct = due.length ? Math.round((completed / due.length) * 100) : 0
   const isStrikeDay = dateKey >= monthStartKey && dateKey < todayKey
+  const monthName = new Date().toLocaleDateString(undefined, { month: 'long' })
 
   return (
     <div className="app">
@@ -214,8 +277,11 @@ function Checklist({ user }) {
           <button className={tab === 'today' ? 'active' : ''} onClick={() => setTab('today')}>
             Checklist
           </button>
+          <button className={tab === 'calendar' ? 'active' : ''} onClick={() => setTab('calendar')}>
+            Calendar
+          </button>
           <button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>
-            All tasks
+            Tasks
           </button>
         </nav>
         <button className="link" onClick={() => supabase.auth.signOut()} title={user.email}>
@@ -231,12 +297,11 @@ function Checklist({ user }) {
 
       {tab === 'today' ? (
         <main>
-          {loaded && (
-            <StrikeCard
-              strikes={strikes}
-              month={new Date().toLocaleDateString(undefined, { month: 'long' })}
-              onJump={(key) => setDate(fromDateKey(key))}
-            />
+          {loaded && doneLoaded && (
+            <>
+              <RateCard due={stats.due} done={stats.done} month={monthName} />
+              <StrikeCard strikes={stats.misses} month={monthName} onJump={(key) => setDate(fromDateKey(key))} />
+            </>
           )}
           <div className="daynav">
             <button aria-label="Previous day" onClick={() => setDate(addDays(date, -1))}>
@@ -267,16 +332,18 @@ function Checklist({ user }) {
           {!loaded ? (
             <p className="muted center">Loading…</p>
           ) : due.length === 0 ? (
-            <p className="empty">{tasks.length ? 'Nothing due this day 🎉' : 'No tasks yet — add your first one.'}</p>
+            punchCards.length === 0 && (
+              <p className="empty">{tasks.length ? 'Nothing due this day 🎉' : 'No tasks yet — add your first one.'}</p>
+            )
           ) : (
             <ul className="list">
               {due.map((t) => (
                 <li key={t.id} className="check-row">
-                  <label className={done.has(t.id) ? 'check done' : 'check'}>
-                    <input type="checkbox" checked={done.has(t.id)} onChange={() => toggle(t)} />
+                  <label className={isDone(t) ? 'check done' : 'check'}>
+                    <input type="checkbox" checked={isDone(t)} onChange={() => toggle(t)} />
                     <span className="box" aria-hidden />
                     <span className="label">{t.title}</span>
-                    {isStrikeDay && !done.has(t.id) && <span className="strike-tag">Strike</span>}
+                    {isStrikeDay && !isDone(t) && <span className="strike-tag">Strike</span>}
                   </label>
                   <button className="edit" aria-label={`Edit ${t.title}`} onClick={() => setEditing(t)}>
                     <PencilIcon />
@@ -286,7 +353,34 @@ function Checklist({ user }) {
             </ul>
           )}
           {due.length > 0 && completed === due.length && <p className="center muted">All done ✓</p>}
+
+          {loaded && punchCards.length > 0 && (
+            <>
+              <h2 className="section-title">Punch cards</h2>
+              <ul className="list">
+                {punchCards.map((t) => (
+                  <PunchCard
+                    key={t.id}
+                    task={t}
+                    punches={punchesInWeek(t, doneKeys, date)}
+                    dateKey={dateKey}
+                    onPunch={() => toggle(t)}
+                    onEdit={() => setEditing(t)}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
         </main>
+      ) : tab === 'calendar' ? (
+        <Calendar
+          tasks={tasks}
+          onError={setError}
+          onOpenDay={(key) => {
+            setDate(fromDateKey(key))
+            setTab('today')
+          }}
+        />
       ) : (
         <main>
           <h1>All tasks</h1>
