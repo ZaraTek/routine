@@ -284,6 +284,14 @@ const TABS = [
 ]
 const tabIndex = (id) => TABS.findIndex(([t]) => t === id)
 
+// Tasks tab sections; weekly sorts by first day of the week it's due (Monday first), monthly by day
+const SCHEDULE_GROUPS = [
+  ['daily', 'Daily'],
+  ['weekly', 'Weekly', (t) => Math.min(...t.weekdays.map((d) => (d + 6) % 7))],
+  ['monthly', 'Monthly', (t) => t.month_day],
+  ['punch', 'Punch cards', (t) => -t.punch_target],
+]
+
 function formatDay(date) {
   const today = toDateKey(new Date())
   const key = toDateKey(date)
@@ -657,19 +665,26 @@ function Checklist({ user }) {
           <main>
             <h1>All tasks</h1>
             {tasks.length === 0 && <p className="empty">No tasks yet — add your first one.</p>}
-            <ul className="list">
-              {tasks.map((t) => (
-                <li key={t.id}>
-                  <button className="row" onClick={() => setEditing(t)}>
-                    <span className="label">{t.title}</span>
-                    <span className="muted">{describeSchedule(t)}</span>
-                    <span className="chevron" aria-hidden>
-                      ›
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            {SCHEDULE_GROUPS.map(([frequency, title, sortKey]) => {
+              const group = tasks.filter((t) => t.frequency === frequency)
+              if (!sortKey) group.sort((a, b) => a.title.localeCompare(b.title))
+              else group.sort((a, b) => sortKey(a) - sortKey(b) || a.title.localeCompare(b.title))
+              return (
+                <HomeSection key={frequency} title={title} count={group.length ? String(group.length) : null}>
+                  {group.map((t) => (
+                    <li key={t.id}>
+                      <button className="row" onClick={() => setEditing(t)}>
+                        <span className="label">{t.title}</span>
+                        <span className="muted">{describeSchedule(t)}</span>
+                        <span className="chevron" aria-hidden>
+                          ›
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </HomeSection>
+              )
+            })}
             <div className="account">
               <span className="muted">Signed in as {user.email}</span>
               <button onClick={() => supabase.auth.signOut()}>Sign out</button>
